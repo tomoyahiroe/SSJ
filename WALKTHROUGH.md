@@ -498,7 +498,7 @@ class KSModel(BaseModel):
 
     @classmethod
     def build(cls, calibration: KSCalibration | None = None) -> "KSModel":
-        c = calibration or KSCalibration()
+        c = KSCalibration() if calibration is None else calibration
         return cls(
             calibration=c,
             chains=_build_markov_chains(c),
@@ -532,13 +532,16 @@ a or b       # a が真なら a を、偽なら b を返す（True/False では�
 
 なので `calibration or KSCalibration()` は「渡されていればそれを使い、`None` なら既定値で新しく作る」という意味になる。
 
-**ただしこの書き方には落とし穴がある。** `or` が見るのは「`None` かどうか」ではなく「真か偽か」なので、`0` や `[]` や `""` のような**偽だが有効な値**が渡されると意図せず既定値に化ける。意図が明確なのはこちら。
+**ただしこの書き方には落とし穴がある。** `or` が見るのは「`None` かどうか」ではなく「真か偽か」なので、`0` や `[]` や `""` のような**偽だが有効な値**が渡されると意図せず既定値に化ける。
+
+今回は `calibration` が pydantic モデルか `None` のどちらかで、pydantic モデルは常に真（実測で `bool(KSCalibration())` は `True`）なので実害はなかった。とはいえ意図が明確な方がよいので、**この質問を受けて `is None` に書き換えた**。上に引用したコードが書き換え後のもの。
 
 ```python
-c = KSCalibration() if calibration is None else calibration
+c = calibration or KSCalibration()                          # 書き換え前
+c = KSCalibration() if calibration is None else calibration  # 書き換え後
 ```
 
-今回は `calibration` が pydantic モデルか `None` のどちらかで、pydantic モデルは常に真（実測で `bool(KSCalibration())` は `True`）なので実害はない。とはいえ `is None` の方が読み手に優しいので、書き換えてもよい。
+パッケージ内の同種の箇所（`Va_init`、`K_low`、`K_high`）はもともと `is not None` で書いてあり、これで全体が揃った。
 
 企業側の関係式もここに置く。既存コードの `vfi_numba` の中にあった式と同一。
 

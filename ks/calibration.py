@@ -276,7 +276,7 @@ class KSModel(BaseModel):
 
     @classmethod
     def build(cls, calibration: KSCalibration | None = None) -> "KSModel":
-        c = calibration or KSCalibration()
+        c = KSCalibration() if calibration is None else calibration
         return cls(
             calibration=c,
             chains=_build_markov_chains(c),
