@@ -28,14 +28,23 @@
 
 ## セットアップ
 
+`uv` + `pyproject.toml` で管理している。依存は `uv.lock` に固定済み。
+
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python \
-    numpy scipy pandas matplotlib pydantic jaxtyping beartype ipykernel \
-    sequence-jacobian numba
+uv sync                      # .venv を作って依存を入れる（ks も editable で入る）
+uv run python -c "import ks" # 実行は uv run 経由が確実
+uv run jupyter lab           # ノートブック
 ```
 
+`ks` はパッケージとしてインストールされるので、`ks/*.py` を編集すれば
+再インストールなしで反映される。どのディレクトリからでも `import ks` できる。
+
 `ks.ssj` 以外は numpy / pydantic / jaxtyping / beartype だけで動く。
+
+> **シェルで pyenv などの仮想環境が有効だと** `VIRTUAL_ENV ... does not match` の警告が出る。
+> `uv` 側は `.venv` を使うので実害はないが、`python` を直接叩くと別の環境に行く。
+> `uv run` を通すか、`pyenv deactivate` してから作業する。
+> VS Code でノートブックを開くときはインタプリタに `.venv/bin/python` を選ぶ。
 
 ## 使い方
 
