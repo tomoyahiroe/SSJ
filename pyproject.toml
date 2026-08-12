@@ -1,7 +1,34 @@
 [project]
 name = "ssj"
 version = "0.1.0"
-description = "Add your description here"
+description = "Krusell=Smith 家計ブロックの Sequence Space Jacobian（講義ノート第7章の宿題）"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    # 本体（ks.ssj 以外はこれだけで動く）
+    "numpy>=2.0",
+    "pydantic>=2.9",
+    "jaxtyping>=0.2.34",
+    "beartype>=0.19",
+    # ノートブック
+    "pandas>=2.2",
+    "matplotlib>=3.9",
+    "ipykernel>=6.29",
+    # 注: 既存の 8_2_krusell_and_smith.py は japanize-matplotlib を import しているが、
+    #     このパッケージは distutils に依存していて Python 3.12 では動かない。
+    #     01/02 のノートブックは plt.rcParams['font.family'] = 'Hiragino Sans' を
+    #     直接指定しているので不要。
+    # ks.ssj（ライブラリ版）用
+    "sequence-jacobian>=1.0.0",
+    "scipy>=1.14",
+    "numba>=0.60",
+]
+
+[dependency-groups]
+dev = [
+    "nbconvert>=7.16",
+    "nbclient>=0.10",
+]
+
+[tool.uv]
+package = false
