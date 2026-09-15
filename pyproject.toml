@@ -3,7 +3,7 @@ name = "ssj"
 version = "0.1.0"
 description = "Krusell=Smith 家計ブロックの Sequence Space Jacobian（講義ノート第7章の宿題）"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     # 本体（ks.ssj 以外はこれだけで動く）
     "numpy>=2.0",
@@ -28,7 +28,14 @@ dependencies = [
 dev = [
     "nbconvert>=7.16",
     "nbclient>=0.10",
+    "ruff>=0.16",
+    "mypy>=2.3",
+    "pytest>=8.3",
 ]
+
+[tool.uv]
+# JIT が組み込まれているのは uv 管理の CPython。Homebrew 版は JIT なしでビルドされている。
+python-preference = "only-managed"
 
 # ks/ をパッケージとして扱う。uv sync が editable install するので、
 # ks/*.py を編集すれば再インストールなしで反映される。
@@ -38,3 +45,94 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["ks"]
+
+
+# =====================================================================
+# Lint / 型検査
+# =====================================================================
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+# 既存の KS(1998) 元祖解法は参照用。このリポジトリでは保守しない。
+extend-exclude = ["8_2_krusell_and_smith.py", "8_2_Krusell_and_Smith.ipynb"]
+
+[tool.ruff.format]
+# ノートブックは `a; b` などの書き方をそのまま残す
+exclude = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # jaxtyping の軸名 "n_e n_a" を前方参照や引用符付き注釈と誤認する
+    "F722", "F821", "UP037",
+    # 経済学の記法（K, Pi, Va, N, Z ...）は大文字のまま使う。SIM300 は大文字属性を定数と誤認する
+    "N802", "N803", "N806", "N815", "SIM300",
+    # 日本語の全角記号。docstring は「。」で終わり、英語の命令法・大文字化は当てはまらない
+    "RUF001", "RUF002", "RUF003", "D400", "D401", "D403",
+    # 実行時の型検査（beartype）が注釈を評価するので、型だけの import に移せない
+    "TC001", "TC002", "TC003",
+    # 例外メッセージは raise に直接書く
+    "TRY003", "EM101", "EM102",
+    # formatter と競合 / 著作権表示
+    "COM812", "CPY001",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.pylint]
+max-args = 7
+max-positional-args = 7
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.isort]
+known-first-party = ["ks"]
+
+[tool.ruff.lint.per-file-ignores]
+# __all__ は分野ごとにコメントで区切って並べている
+"ks/__init__.py" = ["RUF022"]
+# sequence-jacobian は return 文の変数名を出力名として読むので `y = ...; return y` が必須
+"ks/ssj.py" = ["RET504"]
+# テストでは assert とマジックナンバーが本体
+"tests/**" = ["S101", "PLR2004", "INP001"]
+# ノートブックは探索的なコードなので、docstring・注釈・print・マジックナンバー等は求めない
+"*.ipynb" = [
+    "D", "ANN", "T201", "PLR2004", "E402", "B018", "ERA001", "INP001", "S101",
+    "E501", "PD", "FBT", "PLR0913", "PLR0917", "C901", "PLR0912", "PLR0915",
+    "E702", "E703", "N812",  # セミコロンで出力を抑える・`ssj as L` はノートブックの慣用
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.mypy]
+python_version = "3.14"
+files = ["ks", "tests"]
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+extra_checks = true
+disallow_any_unimported = true
+disallow_any_decorated = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool", "possibly-undefined"]
+# disallow_any_explicit は pydantic の BaseModel を継承する行で必ず引っかかるので採用しない
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[[tool.mypy.overrides]]
+module = ["sequence_jacobian", "sequence_jacobian.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# sequence-jacobian に型がないので、その値を扱う関数は Any を含まざるを得ない
+module = ["ks.ssj", "test_ssj"]
+disallow_any_unimported = false
+disallow_any_decorated = false
+disallow_untyped_decorators = false
