@@ -18,10 +18,11 @@ dependencies = [
     #     このパッケージは distutils に依存していて Python 3.12 では動かない。
     #     01/02 のノートブックは plt.rcParams['font.family'] = 'Hiragino Sans' を
     #     直接指定しているので不要。
+    # 内側ループ（ks.household の kernel）のコンパイル
+    "numba>=0.60",
     # ks.ssj（ライブラリ版）用
     "sequence-jacobian>=1.0.0",
     "scipy>=1.14",
-    "numba>=0.60",
 ]
 
 [dependency-groups]
@@ -127,7 +128,7 @@ init_typed = true
 warn_required_dynamic_aliases = true
 
 [[tool.mypy.overrides]]
-module = ["sequence_jacobian", "sequence_jacobian.*"]
+module = ["sequence_jacobian", "sequence_jacobian.*", "numba", "numba.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

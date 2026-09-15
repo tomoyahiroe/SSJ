@@ -8,6 +8,10 @@
 
 補間は sequence_jacobian.utilities.interpolate と数値的に同一の結果を返すように
 書いてある（ライブラリ版と突き合わせるときに補間の差が混ざらないようにするため）。
+
+内側ループ（補間と分布の前向き）は numba でコンパイルした kernel に切り出してある。
+配列が 2 x 200 と小さいので numpy の呼び出しオーバーヘッドが支配的で、
+1本のループに融合すると 10 倍前後速い。形状の検査 `typed` は外側の関数に残す。
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ import numpy as np
 from jaxtyping import Float
 from pydantic import BaseModel, ConfigDict, Field
 
+from ._jit import njit
 from .calibration import KSModel, Prices
 from .types import (
     AggregatePath,
@@ -28,6 +33,7 @@ from .types import (
     EmploymentTransition,
     FloatArray,
     IncomeByState,
+    IntArray,
     LotteryIndex,
     LotteryWeight,
     MarginalValue,
@@ -63,6 +69,29 @@ __all__ = [
 # =====================================================================
 
 
+@njit
+def _interpolate_y_kernel(x: FloatArray, xq: FloatArray, y: FloatArray) -> FloatArray:
+    n_e, n_q = xq.shape
+    n_a = x.shape[-1]
+    out = np.empty((n_e, n_q))
+    for row in range(n_e):
+        i = 0
+        for j in range(n_q):
+            v = xq[row, j]
+            # xq を挟む区間 i（x[i] < v <= x[i + 1]）を直前の位置から動かして探す。
+            # xq が昇順なら行全体で O(n)。昇順でなくても結果は二分探索と同じ。
+            # 範囲外は端の区間で線形外挿になる。
+            while i < n_a - 2 and x[row, i + 1] < v:
+                i += 1
+            while i > 0 and x[row, i] >= v:
+                i -= 1
+            x_lo = x[row, i]
+            x_hi = x[row, i + 1]
+            weight = (x_hi - v) / (x_hi - x_lo)
+            out[row, j] = weight * y[i] + (1.0 - weight) * y[i + 1]
+    return out
+
+
 @typed
 def interpolate_y(
     x: Float[FloatArray, "n_e n_a"],
@@ -72,17 +101,9 @@ def interpolate_y(
     """各行について、増加データ点 x に対して y を xq で線形補間する（範囲外は線形外挿）。
 
     EGM で「内生グリッド上の消費」を「外生グリッド上の手持ち資産」へ移すのに使う。
+    xq が昇順なら速い（EGM ではそう）が、昇順でなくても正しい。
     """
-    n_a = x.shape[-1]
-    i = np.empty(xq.shape, dtype=np.int64)
-    for row in range(x.shape[0]):
-        i[row] = np.searchsorted(x[row], xq[row], side="left") - 1
-    np.clip(i, 0, n_a - 2, out=i)
-
-    x_lo = np.take_along_axis(x, i, axis=-1)
-    x_hi = np.take_along_axis(x, i + 1, axis=-1)
-    weight = (x_hi - xq) / (x_hi - x_lo)
-    return weight * y[i] + (1.0 - weight) * y[i + 1]
+    return _interpolate_y_kernel(x, xq, y)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,14 +198,22 @@ def initial_marginal_value(
 # =====================================================================
 
 
+@njit
+def _forward_endogenous_kernel(D: FloatArray, index: IntArray, weight: FloatArray) -> FloatArray:
+    n_e, n_a = D.shape
+    out = np.zeros((n_e, n_a))
+    for e in range(n_e):
+        for i in range(n_a):  # 下側の格子点に weight、上側に 1 - weight を積む
+            out[e, index[e, i]] += weight[e, i] * D[e, i]
+        for i in range(n_a):
+            out[e, index[e, i] + 1] += (1.0 - weight[e, i]) * D[e, i]
+    return out
+
+
 @typed
 def forward_endogenous(D: Distribution, lottery: Lottery) -> Distribution:
     """資産の遷移だけを進める（雇用状態はまだ動かさない）。"""
-    out = np.zeros_like(D)
-    for e in range(D.shape[0]):
-        np.add.at(out[e], lottery.index[e], lottery.weight[e] * D[e])
-        np.add.at(out[e], lottery.index[e] + 1, (1.0 - lottery.weight[e]) * D[e])
-    return out
+    return _forward_endogenous_kernel(D, lottery.index, lottery.weight)
 
 
 @typed

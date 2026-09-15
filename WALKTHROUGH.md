@@ -43,6 +43,7 @@ ks.jacobian_direct(model, ss, T=5)      jacobian.py      直接法（第7章）
 | `ks/household.py`   | EGM・前向き・定常状態・移行経路              |
 | `ks/jacobian.py`    | 直接法（第7章）とフェイクニュース法（第8章） |
 | `ks/ssj.py`         | sequence-jacobian ライブラリ版               |
+| `ks/_jit.py`        | numba の `njit(cache=True)` に型を付けたもの |
 
 ---
 
@@ -655,7 +656,7 @@ def backward_egm(
 | `uc_nextgrid = beta * expected_Va`                | オイラー方程式の右辺。これが $u'(c_t)$ の満たすべき値                 |
 | `c_nextgrid = uc_nextgrid ** (-eis)`              | 限界効用を逆にして消費に戻す。**内生グリッド上の**消費                |
 | `coh = (1+r) * a_grid + y`                        | 手持ち資産 cash-on-hand。**外生グリッド上**                           |
-| `interpolate_y(c_nextgrid + a_grid, coh, a_grid)` | 内生グリッド $c + a'$ を外生グリッド $coh$ に貼り替える。EGM の心臓部 |
+| `interpolate_y(c_nextgrid + a_grid, coh, a_grid)` | 内生グリッド $c + a'$ を外生グリッド $coh$ に貼り替える。EGM の心臓部。中身は numba の kernel（`_interpolate_y_kernel`）で、昇順の $coh$ を前から走査して区間を見つける |
 | `np.maximum(a, a_grid[0])`                        | 借入制約。オイラー方程式が成り立たない領域をここで潰す                |
 | `Va = (1+r) * c ** (-1/eis)`                      | 次の後ろ向きステップに渡す量                                          |
 
@@ -696,14 +697,22 @@ class Lottery:
 そのうえで、**資産 → 雇用状態の順**に進める。
 
 ```python
+@njit
+def _forward_endogenous_kernel(D: FloatArray, index: IntArray, weight: FloatArray) -> FloatArray:
+    n_e, n_a = D.shape
+    out = np.zeros((n_e, n_a))
+    for e in range(n_e):
+        for i in range(n_a):  # 下側の格子点に weight、上側に 1 - weight を積む
+            out[e, index[e, i]] += weight[e, i] * D[e, i]
+        for i in range(n_a):
+            out[e, index[e, i] + 1] += (1.0 - weight[e, i]) * D[e, i]
+    return out
+
+
 @typed
 def forward_endogenous(D: Distribution, lottery: Lottery) -> Distribution:
     """資産の遷移だけを進める（雇用状態はまだ動かさない）。"""
-    out = np.zeros_like(D)
-    for e in range(D.shape[0]):
-        np.add.at(out[e], lottery.index[e], lottery.weight[e] * D[e])
-        np.add.at(out[e], lottery.index[e] + 1, (1.0 - lottery.weight[e]) * D[e])
-    return out
+    return _forward_endogenous_kernel(D, lottery.index, lottery.weight)
 
 
 @typed
@@ -711,6 +720,8 @@ def forward_step(D: Distribution, Pi: EmploymentTransition, lottery: Lottery) ->
     """D_{t+1} = Lambda_t' D_t。まず資産、次に雇用状態の順（SSJ の規約と同じ）。"""
     return Pi.T @ forward_endogenous(D, lottery)
 ```
+
+`_forward_endogenous_kernel` と `_interpolate_y_kernel` が numba なのは速度のため。配列が 2 x 200 と小さく、numpy で書くと「小さな演算を何度も呼ぶオーバーヘッド」が支配的になる（`np.add.at` 版 5.8 µs → 0.8 µs、補間 16 µs → 1 µs）。形状の検査 `@typed` は外側の関数に残してあるので、呼び出し側から見た仕様は変わらない。
 
 順番は規約の問題だが、**sequence-jacobian と合わせておかないと数値が一致しない**ので そちらに揃えてある。`D_t` は「時点 $t$ 冒頭、$e_t$ が判明したあと、$a_{t-1}$ を持っている状態」の分布。
 
