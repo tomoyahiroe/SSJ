@@ -8,3 +8,8 @@ __pycache__/
 .pytest_cache/
 marimo/__marimo__/
 .claude/
+
+# 手元だけに置く参照資料（配布しない）
+sequence_space_jacobian_lecture_notes_ch4_11.pdf
+8_2_Krusell_and_Smith.ipynb
+8_2_krusell_and_smith.py

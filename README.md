@@ -1,6 +1,6 @@
 # Krusell=Smith 家計ブロックの Sequence Space Jacobian
 
-講義ノート `sequence_space_jacobian_lecture_notes_ch4_11.pdf` 第7章 「直接法：ヤコビアンを一列ずつ計算する」の宿題
+講義ノート（Sequence Space Jacobian、第7章。PDF はリポジトリに含めない） 「直接法：ヤコビアンを一列ずつ計算する」の宿題
 
 > $T = 5$ で直接法を使って家計ブロックのヤコビアンを求める（章末確認問題1）
 
@@ -17,7 +17,7 @@
 | `docs/summary.md`                     | 自分の言葉でのまとめ                                                                                   |
 | `marimo/`                             | 01・02 の marimo 版（`tools/marimo_convert.py` で .ipynb から生成）                                     |
 | `ks/`                                 | 実装本体                                                                                               |
-| `8_2_krusell_and_smith.py` / `.ipynb` | 既存の KS(1998) 元祖解法（参照用。このリポジトリでは使わない）                                         |
+| `8_2_krusell_and_smith.py` / `.ipynb` | 既存の KS(1998) 元祖解法（参照用。リポジトリには含めず、手元にだけ置く）                              |
 
 `ks/` の中身:
 
