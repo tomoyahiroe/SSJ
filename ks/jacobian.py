@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """家計ブロックのヤコビアン。
 
 第7章の直接法（`jacobian_direct`）と、第8章のフェイクニュース法（`jacobian_fake_news`）。
@@ -16,19 +15,19 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .calibration import KSModel
 from .household import (
-    Lottery,
+    BackwardStep,
     SteadyState,
     asset_lottery,
     backward_egm,
     forward_step,
     simulate_transition,
 )
-from .types import Distribution, JacobianMatrix, PolicyFunction, typed
+from .types import FloatArray, JacobianMatrix, MarginalValue, PolicyFunction, typed
 
 __all__ = [
-    "DifferenceScheme",
     "BlockInput",
     "BlockOutput",
+    "DifferenceScheme",
     "HouseholdJacobians",
     "jacobian_direct",
     "jacobian_fake_news",
@@ -45,10 +44,10 @@ class DifferenceScheme(StrEnum):
     """中央差分。誤差 O(eps^2)。計算量は約2倍。"""
 
 
-BlockInput = Literal["r", "w"]
+type BlockInput = Literal["r", "w"]
 """家計ブロックの入力。価格の2本だけ。"""
 
-BlockOutput = Literal["K", "C"]
+type BlockOutput = Literal["K", "C"]
 """家計ブロックの出力。集計資本と集計消費。"""
 
 
@@ -73,15 +72,35 @@ class HouseholdJacobians(BaseModel):
 
     @property
     def T(self) -> int:
+        """切断期間 T。"""
         return self.K_r.shape[0]
 
     @typed
     def get(self, output: BlockOutput, input_: BlockInput) -> JacobianMatrix:
         """出力名と入力名で取り出す（ループを回すとき用）。"""
-        return getattr(self, f"{output}_{input_}")
+        if output == "K":
+            return self.K_r if input_ == "r" else self.K_w
+        return self.C_r if input_ == "r" else self.C_w
+
+    @classmethod
+    def from_columns(
+        cls,
+        columns: dict[str, JacobianMatrix],
+        eps: float | None = None,
+        scheme: DifferenceScheme | None = None,
+    ) -> HouseholdJacobians:
+        """`{"K_r": ..., "K_w": ..., "C_r": ..., "C_w": ...}` から作る。"""
+        return cls(
+            K_r=columns["K_r"],
+            K_w=columns["K_w"],
+            C_r=columns["C_r"],
+            C_w=columns["C_w"],
+            eps=eps,
+            scheme=scheme,
+        )
 
     @typed
-    def max_difference(self, other: "HouseholdJacobians") -> float:
+    def max_difference(self, other: HouseholdJacobians) -> float:
         """4本すべてを比べたときの最大の絶対差。実装同士の突き合わせに使う。"""
         return max(
             float(np.max(np.abs(self.get(o, i) - other.get(o, i))))
@@ -102,6 +121,7 @@ def jacobian_direct(
     T: int = 5,
     eps: float = 1e-4,
     scheme: DifferenceScheme = DifferenceScheme.ONE_SIDED,
+    *,
     verbose: bool = False,
 ) -> HouseholdJacobians:
     """直接法でヤコビアンを求める（講義ノート 定義 7.1）。
@@ -156,9 +176,9 @@ def jacobian_direct(
             columns[f"C_{input_}"][:, s] = (path_up.C - reference_C) / denominator
 
             if verbose:
-                print(f"  入力 {input_} の第 {s} 列 完了")
+                print(f"  入力 {input_} の第 {s} 列 完了")  # noqa: T201  進捗表示
 
-    return HouseholdJacobians(**columns, eps=eps, scheme=scheme)
+    return HouseholdJacobians.from_columns(columns, eps=eps, scheme=scheme)
 
 
 # =====================================================================
@@ -171,10 +191,10 @@ class _FakeNewsIngredients(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
-    curly_Y: dict[str, Float[np.ndarray, "T"]] = Field(
+    curly_Y: dict[str, Float[FloatArray, "T"]] = Field(
         description="s 期先のニュースに対する、時点0 の集計反応"
     )
-    curly_D: Float[np.ndarray, "T n_e n_a"] = Field(
+    curly_D: Float[FloatArray, "T n_e n_a"] = Field(
         description="s 期先のニュースが時点1 の分布に残すずれ"
     )
 
@@ -203,7 +223,7 @@ def jacobian_fake_news(
     denominator = 2.0 * eps if two_sided else eps
 
     def ingredients(input_: BlockInput) -> _FakeNewsIngredients:
-        curly_Y = {"K": np.empty(T), "C": np.empty(T)}
+        curly_Y: dict[str, FloatArray] = {"K": np.empty(T), "C": np.empty(T)}
         curly_D = np.empty((T, model.n_e, model.n_a))
 
         def shocked(sign: float) -> tuple[float, float]:
@@ -212,13 +232,13 @@ def jacobian_fake_news(
                 ss.prices.w + sign * eps if input_ == "w" else ss.prices.w,
             )
 
-        def steady_step(Va: Float[np.ndarray, "n_e n_a"]):
+        def steady_step(Va: MarginalValue) -> BackwardStep:
             return backward_egm(
                 model.Pi @ Va, model.a_grid, model.income(ss.prices.w), ss.prices.r, c.beta, c.eis
             )
 
-        up = down = None
-        Va_up = Va_down = ss.Va
+        # 片側差分では「下側」は定常状態の政策そのもの（動かさない）
+        up = down = BackwardStep(Va=ss.Va, a=ss.a, c=ss.c)
         for s in range(T):
             # s 期先のニュースに対する時点0 の政策 = ショック1回 + 定常ステップ s 回
             if s == 0:
@@ -232,29 +252,21 @@ def jacobian_fake_news(
                         model.Pi @ ss.Va, model.a_grid, model.income(w_d), r_d, c.beta, c.eis
                     )
             else:
-                up = steady_step(Va_up)
+                up = steady_step(up.Va)
                 if two_sided:
-                    down = steady_step(Va_down)
-            Va_up = up.Va
-            a_down: PolicyFunction = down.a if two_sided else ss.a
-            c_down: PolicyFunction = down.c if two_sided else ss.c
-            if two_sided:
-                Va_down = down.Va
+                    down = steady_step(down.Va)
 
-            curly_Y["K"][s] = np.vdot(ss.D, up.a - a_down) / denominator
-            curly_Y["C"][s] = np.vdot(ss.D, up.c - c_down) / denominator
+            curly_Y["K"][s] = np.vdot(ss.D, up.a - down.a) / denominator
+            curly_Y["C"][s] = np.vdot(ss.D, up.c - down.c) / denominator
 
             D_up = forward_step(ss.D, model.Pi, asset_lottery(model.a_grid, up.a))
-            D_down = (
-                forward_step(ss.D, model.Pi, asset_lottery(model.a_grid, a_down))
-                if two_sided
-                else forward_step(ss.D, model.Pi, lottery_ss)
-            )
+            lottery_down = asset_lottery(model.a_grid, down.a) if two_sided else lottery_ss
+            D_down = forward_step(ss.D, model.Pi, lottery_down)
             curly_D[s] = (D_up - D_down) / denominator
 
         return _FakeNewsIngredients(curly_Y=curly_Y, curly_D=curly_D)
 
-    def expectation_vectors(outcome: PolicyFunction) -> Float[np.ndarray, "T_minus_1 n_e n_a"]:
+    def expectation_vectors(outcome: PolicyFunction) -> Float[FloatArray, "T_minus_1 n_e n_a"]:
         """curly_E[t]: 分布の痕跡を将来の集計量に変換するベクトル（ノート 8.5）。"""
         rows = np.arange(model.n_e)[:, None]
         E = np.empty((max(T - 1, 1), model.n_e, model.n_a))
@@ -282,4 +294,4 @@ def jacobian_fake_news(
                 J[t, 1:] += J[t - 1, :-1]
             result[f"{output}_{input_}"] = J
 
-    return HouseholdJacobians(**result, eps=eps, scheme=scheme)
+    return HouseholdJacobians.from_columns(result, eps=eps, scheme=scheme)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """家計問題：後ろ向きの政策、前向きの分布、定常状態、移行経路。
 
 講義ノート第4章の3段階をそのまま関数にしたもの。
@@ -13,6 +12,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import NamedTuple
 
 import numpy as np
@@ -25,6 +25,8 @@ from .types import (
     AssetGrid,
     Distribution,
     DistributionPath,
+    EmploymentTransition,
+    FloatArray,
     IncomeByState,
     LotteryIndex,
     LotteryWeight,
@@ -39,19 +41,20 @@ from .types import (
 __all__ = [
     "BackwardStep",
     "Lottery",
+    "StationaryDistribution",
     "SteadyState",
     "TransitionPath",
-    "interpolate_y",
     "asset_lottery",
     "backward_egm",
-    "initial_marginal_value",
     "forward_endogenous",
     "forward_step",
-    "transition_matrix",
-    "stationary_from_policy",
-    "solve_household",
-    "solve_general_equilibrium",
+    "initial_marginal_value",
+    "interpolate_y",
     "simulate_transition",
+    "solve_general_equilibrium",
+    "solve_household",
+    "stationary_from_policy",
+    "transition_matrix",
 ]
 
 
@@ -62,10 +65,10 @@ __all__ = [
 
 @typed
 def interpolate_y(
-    x: Float[np.ndarray, "n_e n_a"],
-    xq: Float[np.ndarray, "n_e n_a"],
-    y: Float[np.ndarray, "n_a"],
-) -> Float[np.ndarray, "n_e n_a"]:
+    x: Float[FloatArray, "n_e n_a"],
+    xq: Float[FloatArray, "n_e n_a"],
+    y: Float[FloatArray, "n_a"],
+) -> Float[FloatArray, "n_e n_a"]:
     """各行について、増加データ点 x に対して y を xq で線形補間する（範囲外は線形外挿）。
 
     EGM で「内生グリッド上の消費」を「外生グリッド上の手持ち資産」へ移すのに使う。
@@ -82,10 +85,13 @@ def interpolate_y(
     return weight * y[i] + (1.0 - weight) * y[i + 1]
 
 
-class Lottery(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class Lottery:
     """政策 a_t をグリッド上の2点に振り分ける「くじ」表現。
 
         a_t = weight * a_grid[index] + (1 - weight) * a_grid[index + 1]
+
+    NamedTuple にしていないのは、フィールド名 `index` が `tuple.index` と衝突するため。
     """
 
     index: LotteryIndex
@@ -182,13 +188,13 @@ def forward_endogenous(D: Distribution, lottery: Lottery) -> Distribution:
 
 
 @typed
-def forward_step(D: Distribution, Pi: Float[np.ndarray, "n_e n_e"], lottery: Lottery) -> Distribution:
+def forward_step(D: Distribution, Pi: EmploymentTransition, lottery: Lottery) -> Distribution:
     """D_{t+1} = Lambda_t' D_t。まず資産、次に雇用状態の順（SSJ の規約と同じ）。"""
     return Pi.T @ forward_endogenous(D, lottery)
 
 
 @typed
-def transition_matrix(Pi: Float[np.ndarray, "n_e n_e"], lottery: Lottery) -> TransitionMatrix:
+def transition_matrix(Pi: EmploymentTransition, lottery: Lottery) -> TransitionMatrix:
     """遷移行列 Lambda を (n_e*n_a, n_e*n_a) の密行列として明示的に作る。
 
     状態数は 2 * n_a しかないので密行列で持って問題ない。
@@ -214,9 +220,7 @@ class StationaryDistribution(NamedTuple):
 
 
 @typed
-def stationary_from_policy(
-    Pi: Float[np.ndarray, "n_e n_e"], lottery: Lottery
-) -> StationaryDistribution:
+def stationary_from_policy(Pi: EmploymentTransition, lottery: Lottery) -> StationaryDistribution:
     """政策から定常分布を直接解く: D = Lambda' D, 1'D = 1。
 
     KS のキャリブレーションは beta*(1+r) が 1 に極端に近く、前向き反復では
@@ -257,8 +261,12 @@ class SteadyState(BaseModel):
     D: Distribution = Field(description="定常分布。移行経路の初期条件になる")
 
     backward_iterations: int = Field(description="政策関数の収束までの反復回数")
-    distribution_residual: float = Field(description="max|Lambda' D - D|。基準走行の平坦さを左右する")
-    top_grid_mass: float = Field(description="資産グリッド上端10点の質量。小さいほどグリッドが足りている")
+    distribution_residual: float = Field(
+        description="max|Lambda' D - D|。基準走行の平坦さを左右する"
+    )
+    top_grid_mass: float = Field(
+        description="資産グリッド上端10点の質量。小さいほどグリッドが足りている"
+    )
 
     @typed
     def excess_demand(self, K_supplied: float) -> float:
@@ -271,6 +279,7 @@ def solve_household(
     model: KSModel,
     prices: Prices,
     Va_init: MarginalValue | None = None,
+    *,
     backward_tol: float = 1e-11,
     backward_maxit: int = 50_000,
 ) -> SteadyState:
@@ -281,8 +290,10 @@ def solve_household(
     c = model.calibration
     y = model.income(prices.w)
 
-    Va = Va_init if Va_init is not None else initial_marginal_value(model.a_grid, y, prices.r, c.eis)
-    a_previous = np.zeros((model.n_e, model.n_a))
+    Va = (
+        Va_init if Va_init is not None else initial_marginal_value(model.a_grid, y, prices.r, c.eis)
+    )
+    a_previous: PolicyFunction = np.zeros((model.n_e, model.n_a))
     step = BackwardStep(Va=Va, a=a_previous, c=a_previous)
     iterations = 0
     for iterations in range(1, backward_maxit + 1):
@@ -292,7 +303,8 @@ def solve_household(
                 break
             a_previous = step.a
     else:
-        raise RuntimeError("政策関数が収束しませんでした")
+        msg = "政策関数が収束しませんでした"
+        raise RuntimeError(msg)
 
     stationary = stationary_from_policy(model.Pi, asset_lottery(model.a_grid, step.a))
 
@@ -316,6 +328,7 @@ def solve_general_equilibrium(
     model: KSModel,
     K_low: float | None = None,
     K_high: float | None = None,
+    *,
     tol: float = 1e-11,
     verbose: bool = False,
 ) -> SteadyState:
@@ -338,14 +351,17 @@ def solve_general_equilibrium(
 
     ss = evaluate(K_high)
     if ss.excess_demand(K_high) > 0.0:
-        raise RuntimeError(f"上側の境界で超過需要 ({ss.excess_demand(K_high):.3e})。K_high を大きく。")
+        msg = f"上側の境界で超過需要 ({ss.excess_demand(K_high):.3e})。K_high を大きく。"
+        raise RuntimeError(msg)
 
     while K_high - K_low > tol * max(1.0, K_low):
         K_mid = 0.5 * (K_low + K_high)
         candidate = evaluate(K_mid)
         excess = candidate.excess_demand(K_mid)
         if verbose:
-            print(f"  K = {K_mid:10.6f}   r = {candidate.prices.r:9.6f}   超過需要 = {excess: .3e}")
+            print(  # noqa: T201  verbose=True のときの進捗表示
+                f"  K = {K_mid:10.6f}   r = {candidate.prices.r:9.6f}   超過需要 = {excess: .3e}"
+            )
         if excess > 0.0:
             K_low = K_mid
         else:
@@ -368,12 +384,15 @@ class TransitionPath(BaseModel):
     K: AggregatePath = Field(description="集計資本（家計の期末資産）の経路")
     C: AggregatePath = Field(description="集計消費の経路")
 
-    a: PolicyPath | None = Field(default=None, description="各時点の貯蓄政策（store_internals=True のとき）")
+    a: PolicyPath | None = Field(
+        default=None, description="各時点の貯蓄政策（store_internals=True のとき）"
+    )
     c: PolicyPath | None = Field(default=None, description="各時点の消費政策")
     D: DistributionPath | None = Field(default=None, description="各時点の分布")
 
     @property
     def T(self) -> int:
+        """経路の長さ。"""
         return self.K.shape[0]
 
 
@@ -383,6 +402,7 @@ def simulate_transition(
     ss: SteadyState,
     r_path: PricePath,
     w_path: PricePath,
+    *,
     store_internals: bool = False,
 ) -> TransitionPath:
     """価格経路を受け取って集計経路を返す。ブロック写像 H そのもの。

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """パラメータと、集計ショックを積分して消す作業。
 
 既存コード 8_2_krusell_and_smith.py の `Setting`（replicate_model = 0、
@@ -20,6 +19,7 @@ from .types import (
     AggregateTransition,
     AssetGrid,
     EmploymentTransition,
+    FloatArray,
     IncomeByState,
     JointDistribution,
     JointTransition,
@@ -27,12 +27,12 @@ from .types import (
 )
 
 __all__ = [
-    "Prices",
     "KSCalibration",
     "KSMarkovChains",
     "KSModel",
-    "stationary_distribution",
+    "Prices",
     "exponential_grid",
+    "stationary_distribution",
 ]
 
 
@@ -57,19 +57,20 @@ class Prices(BaseModel):
 
 @typed
 def stationary_distribution(
-    P: Float[np.ndarray, "n n"], tol: float = 1e-14, max_iter: int = 1_000_000
-) -> Float[np.ndarray, "n"]:
+    P: Float[FloatArray, "n n"], tol: float = 1e-14, max_iter: int = 1_000_000
+) -> Float[FloatArray, "n"]:
     """行確率行列 P の定常分布 x（x P = x, 1'x = 1）を反復で求める。
 
     既存コードの `stationary_by_iteration` と同じ。状態数が小さいチェーン専用。
     """
-    x = np.full(P.shape[0], 1.0 / P.shape[0])
+    x: FloatArray = np.full(P.shape[0], 1.0 / P.shape[0], dtype=np.float64)
     for _ in range(max_iter):
         y = x @ P
         if np.max(np.abs(y - x)) < tol:
             return y
         x = y
-    raise RuntimeError("stationary_distribution: 収束しませんでした")
+    msg = "stationary_distribution: 収束しませんでした"
+    raise RuntimeError(msg)
 
 
 @typed
@@ -113,12 +114,18 @@ class KSCalibration(BaseModel):
     u_good: float = Field(0.04, gt=0.0, lt=1.0, description="好況時の失業率")
     z_bad: float = Field(0.99, gt=0.0, description="不況時の TFP")
     z_good: float = Field(1.01, gt=0.0, description="好況時の TFP")
-    dur_unemployed_good: float = Field(1.5, gt=1.0, description="好況時の平均失業継続期間（四半期）")
+    dur_unemployed_good: float = Field(
+        1.5, gt=1.0, description="好況時の平均失業継続期間（四半期）"
+    )
     dur_unemployed_bad: float = Field(2.5, gt=1.0, description="不況時の平均失業継続期間（四半期）")
     dur_good: float = Field(8.0, gt=1.0, description="好況の平均継続期間（四半期）")
     dur_bad: float = Field(8.0, gt=1.0, description="不況の平均継続期間（四半期）")
-    add_assumption_1: float = Field(1.25, gt=0.0, description="好況→不況の失業継続への調整（KS の追加仮定）")
-    add_assumption_2: float = Field(0.75, gt=0.0, description="不況→好況の失業継続への調整（KS の追加仮定）")
+    add_assumption_1: float = Field(
+        1.25, gt=0.0, description="好況→不況の失業継続への調整（KS の追加仮定）"
+    )
+    add_assumption_2: float = Field(
+        0.75, gt=0.0, description="不況→好況の失業継続への調整（KS の追加仮定）"
+    )
 
     # --- 資産グリッド ---
     n_a: int = Field(200, ge=10, description="資産グリッドの点数。政策と分布で共用する")
@@ -149,14 +156,16 @@ class KSMarkovChains(BaseModel):
     joint: JointTransition = Field(description="P(A', l' | A, l)。行 = 2*A + l")
     employment_given_A: JointTransition = Field(description="P(l' | A, A', l)。行 = 2*A + l")
 
-    aggregate_stationary: Float[np.ndarray, "n_A"] = Field(description="A の定常分布（既存コードの A_ss）")
+    aggregate_stationary: Float[FloatArray, "n_A"] = Field(
+        description="A の定常分布（既存コードの A_ss）"
+    )
     joint_stationary: JointDistribution = Field(description="(A, l) の同時定常分布")
 
     employment: EmploymentTransition = Field(description="A を積分した2状態チェーン Pi(l' | l)")
     u_ss: float = Field(description="Pi の定常失業率。同時定常分布の周辺失業率と一致する")
 
     @property
-    def employment_marginal(self) -> Float[np.ndarray, "n_e"]:
+    def employment_marginal(self) -> Float[FloatArray, "n_e"]:
         """同時定常分布から得た雇用の周辺分布 [失業, 就業]。"""
         j = self.joint_stationary
         return np.array([j[0] + j[2], j[1] + j[3]])
@@ -164,12 +173,10 @@ class KSMarkovChains(BaseModel):
     @property
     def mean_unemployment_duration(self) -> float:
         """積分後のチェーンが含意する平均失業継続期間（四半期）。"""
-        return 1.0 / (1.0 - self.employment[0, 0])
+        return float(1.0 / (1.0 - self.employment[0, 0]))
 
     @typed
-    def conditional_employment_matrix(
-        self, a_now: int, a_next: int
-    ) -> EmploymentTransition:
+    def conditional_employment_matrix(self, a_now: int, a_next: int) -> EmploymentTransition:
         """(A, A') の組を一つ指定して、その 2x2 雇用遷移行列を取り出す。
 
         Pi はこの4枚を重み付き平均したものになっている。
@@ -177,7 +184,7 @@ class KSMarkovChains(BaseModel):
         return self.employment_given_A[2 * a_now : 2 * a_now + 2, 2 * a_next : 2 * a_next + 2]
 
     @typed
-    def mixing_weights(self, employment_state: int) -> Float[np.ndarray, "n_An_e"]:
+    def mixing_weights(self, employment_state: int) -> Float[FloatArray, "n_An_e"]:
         """Pi の第 `employment_state` 行を作るときの、4枚の行列にかかる重み（合計 1）。
 
         重み = pi(A | l) * P(A' | A)。並びは [(不況,不況), (不況,好況), (好況,不況), (好況,好況)]。
@@ -241,7 +248,9 @@ def _build_markov_chains(c: KSCalibration) -> KSMarkovChains:
             for j_a in range(2):
                 for j_l in range(2):
                     employment[i_l, j_l] += (
-                        joint_stationary[row] * aggregate[i_a, j_a] * employment_given_a[row, 2 * j_a + j_l]
+                        joint_stationary[row]
+                        * aggregate[i_a, j_a]
+                        * employment_given_a[row, 2 * j_a + j_l]
                     )
     employment /= marg_l[:, None]
 
@@ -275,7 +284,8 @@ class KSModel(BaseModel):
     a_grid: AssetGrid = Field(description="資産グリッド。政策と分布で共用する")
 
     @classmethod
-    def build(cls, calibration: KSCalibration | None = None) -> "KSModel":
+    def build(cls, calibration: KSCalibration | None = None) -> KSModel:
+        """パラメータから導出量（マルコフ連鎖・資産グリッド）を計算して組み立てる。"""
         c = KSCalibration() if calibration is None else calibration
         return cls(
             calibration=c,
@@ -297,10 +307,12 @@ class KSModel(BaseModel):
 
     @property
     def n_e(self) -> int:
+        """個別の雇用状態の数（2）。"""
         return self.Pi.shape[0]
 
     @property
     def n_a(self) -> int:
+        """資産グリッドの点数。"""
         return self.calibration.n_a
 
     @cached_property
@@ -318,8 +330,9 @@ class KSModel(BaseModel):
     def K_impatience_bound(self) -> float:
         """r(K) = 1/beta - 1 となる K。均衡 K はこれより大きくないと定常分布が存在しない。"""
         c = self.calibration
-        return self.N * ((c.alpha * self.Z) / (c.r_impatience_bound + c.delta)) ** (
-            1.0 / (1.0 - c.alpha)
+        return float(
+            self.N
+            * ((c.alpha * self.Z) / (c.r_impatience_bound + c.delta)) ** (1.0 / (1.0 - c.alpha))
         )
 
     # --- 企業側の関係式（既存コード vfi_numba の中の式と同一） ---
@@ -338,7 +351,7 @@ class KSModel(BaseModel):
     def output(self, K: float) -> float:
         """産出 Y = Z K^alpha N^(1-alpha)。"""
         c = self.calibration
-        return self.Z * K**c.alpha * self.N ** (1.0 - c.alpha)
+        return float(self.Z * K**c.alpha * self.N ** (1.0 - c.alpha))
 
     @typed
     def income(self, w: float) -> IncomeByState:

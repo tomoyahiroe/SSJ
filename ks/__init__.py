@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Krusell=Smith 型家計ブロックの Sequence Space Jacobian。
 
 講義ノート `sequence_space_jacobian_lecture_notes_ch4_11.pdf` 第7章
@@ -19,7 +18,7 @@
 
 型について
 ----------
-配列の型エイリアスは `ks.types` にまとめてある。`Float[np.ndarray, "n_e n_a"]` の
+配列の型エイリアスは `ks.types` にまとめてある。`Float[FloatArray, "n_e n_a"]` の
 ように軸の名前まで書いてあるので、関数シグネチャを見れば形が分かる。
 既定では実行時にも検査される（環境変数 `KS_TYPECHECK=0` で無効化）。
 """

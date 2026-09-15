@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """sequence-jacobian ライブラリ版。
 
 https://github.com/shade-econ/sequence-jacobian を使って、`ks` パッケージの自作実装と
@@ -15,27 +14,31 @@ from typing import Any
 
 import numpy as np
 import sequence_jacobian as sj
-from pydantic import BaseModel, ConfigDict, Field
-from sequence_jacobian import het, simple
+from sequence_jacobian import SteadyStateDict, het, simple
 
 from .calibration import KSModel, Prices
 from .household import SteadyState
 from .jacobian import DifferenceScheme, HouseholdJacobians
-from .types import typed
+from .types import AssetGrid, FloatArray, IncomeByState, JacobianMatrix, MarginalValue, typed
 
 __all__ = [
-    "hh",
-    "hh_extended",
-    "firm",
-    "market_clearing",
     "STRICT_TOLERANCES",
     "build_calibration",
+    "direct_jacobians_via_library",
+    "firm",
+    "hh",
+    "hh_extended",
+    "library_jacobians",
+    "market_clearing",
+    "solve_general_equilibrium_with_library",
     "solve_steady_state",
     "steady_state_to_ks",
-    "library_jacobians",
-    "direct_jacobians_via_library",
-    "solve_general_equilibrium_with_library",
 ]
+
+# sequence-jacobian は simple ブロックの引数に Displace 等の独自オブジェクトを渡すので、
+# ライブラリが呼ぶコールバックの引数は Any にしてある。
+# また、ライブラリは return 文の「変数名」を出力名として読む（行末コメントも不可）ので、
+# `y = ...; return y` の形を崩せない（RET504 はこのファイルだけ無効）。
 
 
 # =====================================================================
@@ -46,19 +49,21 @@ __all__ = [
 # =====================================================================
 
 
-def hh_init(a_grid, y, r, eis):
+def hh_init(a_grid: AssetGrid, y: IncomeByState, r: float, eis: float) -> MarginalValue:
     """後ろ向き反復の初期値。ks.household.initial_marginal_value と同一。
 
     注意: sequence-jacobian は return 文に書かれた「変数名」を出力名として読み取るので、
     式をそのまま返さず必ず名前付きの変数を返すこと。
     """
     coh = (1 + r) * a_grid[np.newaxis, :] + y[:, np.newaxis]
-    Va = (1 + r) * (0.1 * coh) ** (-1 / eis)
+    Va: MarginalValue = (1 + r) * (0.1 * coh) ** (-1 / eis)
     return Va
 
 
 @het(exogenous="Pi", policy="a", backward="Va", backward_init=hh_init)
-def hh(Va_p, a_grid, y, r, beta, eis):
+def hh(
+    Va_p: MarginalValue, a_grid: AssetGrid, y: IncomeByState, r: float, beta: float, eis: float
+) -> tuple[MarginalValue, FloatArray, FloatArray]:
     """内生グリッド法による1期分の後ろ向きステップ。Va_p = E_t[Va_{t+1}]。"""
     uc_nextgrid = beta * Va_p
     c_nextgrid = uc_nextgrid ** (-eis)
@@ -70,7 +75,7 @@ def hh(Va_p, a_grid, y, r, beta, eis):
     return Va, a, c
 
 
-def income(w, lbar, unemployment_insurance):
+def income(w: float, lbar: float, unemployment_insurance: float) -> IncomeByState:
     """雇用状態ごとの労働所得。ks.calibration.KSModel.income と同一。"""
     y = np.array([unemployment_insurance, w * lbar])
     return y
@@ -80,7 +85,7 @@ hh_extended = hh.add_hetinputs([income])
 
 
 @simple
-def firm(K, N, Z, alpha, delta):
+def firm(K: Any, N: Any, Z: Any, alpha: Any, delta: Any) -> tuple[Any, Any, Any]:  # noqa: ANN401
     """時点 t の生産は期首資本 K(-1) = K_{t-1} を使う（ノート ii ページのタイミング規約）。"""
     r = alpha * Z * (K(-1) / N) ** (alpha - 1) - delta
     w = (1 - alpha) * Z * (K(-1) / N) ** alpha
@@ -89,7 +94,7 @@ def firm(K, N, Z, alpha, delta):
 
 
 @simple
-def market_clearing(K, A):
+def market_clearing(K: Any, A: Any) -> Any:  # noqa: ANN401
     """家計の期末資産集計 A が、企業に貸し出される資本 K に一致する。"""
     asset_mkt = A - K
     return asset_mkt
@@ -99,12 +104,12 @@ def market_clearing(K, A):
 # 許容誤差
 # =====================================================================
 
-STRICT_TOLERANCES: dict[str, Any] = dict(
-    backward_tol=1e-12,
-    backward_maxit=100_000,
-    forward_tol=1e-13,
-    forward_maxit=3_000_000,
-)
+STRICT_TOLERANCES: dict[str, float] = {
+    "backward_tol": 1e-12,
+    "backward_maxit": 100_000,
+    "forward_tol": 1e-13,
+    "forward_maxit": 3_000_000,
+}
 """既定より厳しい許容誤差。
 
 このキャリブレーションでは beta * (1 + r_ss) = 0.99990 と 1 に極端に近く、遷移行列の
@@ -123,34 +128,34 @@ STRICT_TOLERANCES: dict[str, Any] = dict(
 
 
 @typed
-def build_calibration(model: KSModel, prices: Prices) -> dict[str, Any]:
+def build_calibration(model: KSModel, prices: Prices) -> dict[str, float | FloatArray]:
     """`KSModel` から sequence-jacobian の calibration 辞書を作る。
 
     グリッドも遷移行列も自作版と同じオブジェクトを渡すので、両者の差は
     アルゴリズムの差だけになる。
     """
     c = model.calibration
-    return dict(
-        Pi=model.Pi,
-        a_grid=model.a_grid,
-        beta=c.beta,
-        eis=c.eis,
-        lbar=c.lbar,
-        unemployment_insurance=c.unemployment_insurance,
-        r=prices.r,
-        w=prices.w,
-    )
+    return {
+        "Pi": model.Pi,
+        "a_grid": model.a_grid,
+        "beta": c.beta,
+        "eis": c.eis,
+        "lbar": c.lbar,
+        "unemployment_insurance": c.unemployment_insurance,
+        "r": prices.r,
+        "w": prices.w,
+    }
 
 
 @typed
-def solve_steady_state(model: KSModel, prices: Prices, strict: bool = True):
+def solve_steady_state(model: KSModel, prices: Prices, *, strict: bool = True) -> SteadyStateDict:
     """価格を所与に、ライブラリで家計ブロックの定常状態を解く。"""
     options = STRICT_TOLERANCES if strict else {}
     return hh_extended.steady_state(build_calibration(model, prices), **options)
 
 
 @typed
-def steady_state_to_ks(ss_library) -> SteadyState:
+def steady_state_to_ks(ss_library: SteadyStateDict) -> SteadyState:
     """ライブラリの SteadyStateDict を自作の `SteadyState` に詰め替える。
 
     同じ定常状態の上で両方の直接法を走らせて、実装が一致することを確かめるために使う。
@@ -172,7 +177,9 @@ def steady_state_to_ks(ss_library) -> SteadyState:
 
 
 @typed
-def library_jacobians(ss_library, T: int = 5, eps: float = 1e-4, twosided: bool = True) -> HouseholdJacobians:
+def library_jacobians(
+    ss_library: SteadyStateDict, T: int = 5, eps: float = 1e-4, *, twosided: bool = True
+) -> HouseholdJacobians:
     """ライブラリの `.jacobian()`（フェイクニュース法）を自作の型に詰め替える。
 
     `twosided` の既定を True にしてあるのは、ライブラリの既定（片側差分 h=1e-4）だと
@@ -194,7 +201,7 @@ def library_jacobians(ss_library, T: int = 5, eps: float = 1e-4, twosided: bool 
 
 @typed
 def direct_jacobians_via_library(
-    ss_library, T: int = 5, eps: float = 1e-4, subtract_baseline: bool = True
+    ss_library: SteadyStateDict, T: int = 5, eps: float = 1e-4, *, subtract_baseline: bool = True
 ) -> HouseholdJacobians:
     """ライブラリの非線形移行経路を使って直接法でヤコビアンを構成する。
 
@@ -208,7 +215,9 @@ def direct_jacobians_via_library(
         base = hh_extended.impulse_nonlinear(ss_library, {"r": np.zeros(T)}, outputs=["A", "C"])
         zero = {"K": np.asarray(base["A"]), "C": np.asarray(base["C"])}
 
-    columns = {f"{o}_{i}": np.empty((T, T)) for o in ("K", "C") for i in ("r", "w")}
+    columns: dict[str, JacobianMatrix] = {
+        f"{o}_{i}": np.empty((T, T)) for o in ("K", "C") for i in ("r", "w")
+    }
     for input_ in ("r", "w"):
         for s in range(T):
             shock = np.zeros(T)
@@ -217,11 +226,11 @@ def direct_jacobians_via_library(
             columns[f"K_{input_}"][:, s] = (np.asarray(path["A"]) - zero["K"]) / eps
             columns[f"C_{input_}"][:, s] = (np.asarray(path["C"]) - zero["C"]) / eps
 
-    return HouseholdJacobians(**columns, eps=eps, scheme=DifferenceScheme.ONE_SIDED)
+    return HouseholdJacobians.from_columns(columns, eps=eps, scheme=DifferenceScheme.ONE_SIDED)
 
 
 @typed
-def solve_general_equilibrium_with_library(model: KSModel, K_low: float = 11.58):
+def solve_general_equilibrium_with_library(model: KSModel, K_low: float = 11.58) -> SteadyStateDict:
     """一般均衡の定常状態をライブラリに解かせる（第10・11章の入口）。
 
     資産需要は r = 1/beta - 1 の近くで爆発するので、下側の境界は発散点
@@ -229,18 +238,18 @@ def solve_general_equilibrium_with_library(model: KSModel, K_low: float = 11.58)
     """
     c = model.calibration
     ks_model = sj.create_model([hh_extended, firm, market_clearing], name="Krusell-Smith")
-    calibration = dict(
-        Pi=model.Pi,
-        a_grid=model.a_grid,
-        beta=c.beta,
-        eis=c.eis,
-        lbar=c.lbar,
-        unemployment_insurance=c.unemployment_insurance,
-        alpha=c.alpha,
-        delta=c.delta,
-        Z=model.Z,
-        N=model.N,
-    )
+    calibration = {
+        "Pi": model.Pi,
+        "a_grid": model.a_grid,
+        "beta": c.beta,
+        "eis": c.eis,
+        "lbar": c.lbar,
+        "unemployment_insurance": c.unemployment_insurance,
+        "alpha": c.alpha,
+        "delta": c.delta,
+        "Z": model.Z,
+        "N": model.N,
+    }
     return ks_model.solve_steady_state(
         calibration,
         unknowns={"K": (K_low, 40.0 * model.N)},
