@@ -12,7 +12,10 @@
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `01_homework_direct_method.ipynb`     | **宿題そのもの。** 定常状態 → ブロック写像 → $J^{K,r}_{:,3}$ を一列 → 4本のヤコビアン → 章末問題の答え |
 | `02_experiments.ipynb`                | 周辺の検証と実験。キャリブレーション、差分幅、計算量、ライブラリ突き合わせ、失業保険の感応度           |
-| `WALKTHROUGH.md`                      | `ks` パッケージが何をしているかを、実行順に言葉と実コードを交互に並べて解説                            |
+| `docs/WALKTHROUGH.md`                 | `ks` パッケージが何をしているかを、実行順に言葉と実コードを交互に並べて解説                            |
+| `docs/note.md`                        | 読みながら出た疑問と、その回答（実装へのリンク付き）                                                   |
+| `docs/summary.md`                     | 自分の言葉でのまとめ                                                                                   |
+| `marimo/`                             | 01・02 の marimo 版（`tools/marimo_convert.py` で .ipynb から生成）                                     |
 | `ks/`                                 | 実装本体                                                                                               |
 | `8_2_krusell_and_smith.py` / `.ipynb` | 既存の KS(1998) 元祖解法（参照用。このリポジトリでは使わない）                                         |
 
@@ -35,6 +38,19 @@ uv sync                      # .venv を作って依存を入れる（ks も edi
 uv run python -c "import ks" # 実行は uv run 経由が確実
 uv run jupyter lab           # ノートブック
 ```
+
+### marimo で開く
+
+正本は `.ipynb` だが、同じ内容を marimo でも開ける。`marimo/*.py` は変換済みのものを置いてあり、.ipynb を変えたら 1 コマンドで作り直す:
+
+```bash
+uv run tools/marimo_convert.py                                    # 01, 02 → marimo/*.py
+uv run --env-file .env marimo edit marimo/01_homework_direct_method.py
+```
+
+`marimo convert` がセルをそのまま移し、複数セルで再定義される名前（`fig, ax` など）はセル内変数 `_fig, _ax` に直す。
+IPython の `display(...)` だけは変換スクリプトが `mo.output.append(...)` に置き換える。
+marimo 側で編集した内容を戻すなら `uv run marimo export ipynb marimo/xxx.py -o xxx.ipynb`。
 
 ### JIT
 

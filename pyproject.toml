@@ -32,6 +32,7 @@ dev = [
     "ruff>=0.16",
     "mypy>=2.3",
     "pytest>=8.3",
+    "marimo>=0.24.2",
 ]
 
 [tool.uv]
@@ -56,7 +57,8 @@ packages = ["ks"]
 target-version = "py314"
 line-length = 100
 # 既存の KS(1998) 元祖解法は参照用。このリポジトリでは保守しない。
-extend-exclude = ["8_2_krusell_and_smith.py", "8_2_Krusell_and_Smith.ipynb"]
+# marimo/ は tools/marimo_convert.py が .ipynb から生成するもの。
+extend-exclude = ["8_2_krusell_and_smith.py", "8_2_Krusell_and_Smith.ipynb", "marimo/"]
 
 [tool.ruff.format]
 # ノートブックは `a; b` などの書き方をそのまま残す
@@ -99,6 +101,8 @@ known-first-party = ["ks"]
 "ks/ssj.py" = ["RET504"]
 # テストでは assert とマジックナンバーが本体
 "tests/**" = ["S101", "PLR2004", "INP001"]
+# 開発用スクリプト。固定のコマンドを subprocess で呼び、結果を print する
+"tools/**" = ["INP001", "S603", "T201"]
 # ノートブックは探索的なコードなので、docstring・注釈・print・マジックナンバー等は求めない
 "*.ipynb" = [
     "D", "ANN", "T201", "PLR2004", "E402", "B018", "ERA001", "INP001", "S101",
@@ -112,7 +116,7 @@ addopts = "-ra"
 
 [tool.mypy]
 python_version = "3.14"
-files = ["ks", "tests"]
+files = ["ks", "tests", "tools"]
 strict = true
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
