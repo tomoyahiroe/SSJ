@@ -13,6 +13,8 @@
 | `01_homework_direct_method.ipynb`     | **宿題そのもの。** 定常状態 → ブロック写像 → $J^{K,r}_{:,3}$ を一列 → 4本のヤコビアン → 章末問題の答え |
 | `02_experiments.ipynb`                | 周辺の検証と実験。キャリブレーション、差分幅、計算量、ライブラリ突き合わせ、失業保険の感応度           |
 | `docs/WALKTHROUGH.md`                 | `ks` パッケージが何をしているかを、実行順に言葉と実コードを交互に並べて解説                            |
+| `docs/TYPING_AND_LINT.md`             | 型検査（mypy / jaxtyping + beartype / pydantic）と Lint（Ruff）の仕組み。自作デコレータ `typed`・`njit` |
+| `docs/PERFORMANCE.md`                 | 速度の仕組み。numba kernel、型検査の切り替え、線形方程式による定常分布、温かい再開、くじ表現       |
 | `docs/note.md`                        | 読みながら出た疑問と、その回答（実装へのリンク付き）                                                   |
 | `docs/summary.md`                     | 自分の言葉でのまとめ                                                                                   |
 | `marimo/`                             | 01・02 の marimo 版（`tools/marimo_convert.py` で .ipynb から生成）                                     |
