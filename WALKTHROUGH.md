@@ -2,8 +2,7 @@
 
 `ks.jacobian_direct(model, ss, T=5)` を呼んだとき、中で何が起きているのかを **実行される順番どおりに**、言葉と実際のコードを交互に並べて追う。
 
-本文で引用しているコードはすべて実物（コメントとドックストリングは一部省略）。
-`Q:` は読んでいて出た疑問、`**A:**` はその回答。回答中のコードには説明用の擬似例も含む。
+本文で引用しているコードはすべて実物（コメントとドックストリングは一部省略）。 `Q:` は読んでいて出た疑問、`**A:**` はその回答。回答中のコードには説明用の擬似例も含む。
 
 ---
 
@@ -61,17 +60,19 @@ n_A : 集計状態の数。KS では 2（不況 / 好況）
       定常状態を作る過程でのみ登場し、SSJ の家計ブロックには残らない
 ```
 
+`FloatArray` は `np.ndarray[tuple[int, ...], np.dtype[np.float64]]` の別名。裸の `np.ndarray` は静的には `ndarray[Any, Any]` に展開されて mypy の厳格モードで Any 扱いになるので、dtype まで固定してある。
+
 ```python
-PolicyFunction: TypeAlias = Float[np.ndarray, "n_e n_a"]
+type PolicyFunction = Float[FloatArray, "n_e n_a"]
 """個別状態 (e_t, a_{t-1}) 上の政策関数。期末資産 a_t または消費 c_t。"""
 
-MarginalValue: TypeAlias = Float[np.ndarray, "n_e n_a"]
+type MarginalValue = Float[FloatArray, "n_e n_a"]
 """価値関数の資産微分 V_a。EGM の後ろ向き変数。形は政策関数と同じ。"""
 
-Distribution: TypeAlias = Float[np.ndarray, "n_e n_a"]
+type Distribution = Float[FloatArray, "n_e n_a"]
 """時点 t 冒頭の個別状態 (e_t, a_{t-1}) 上の分布 D_t。総和は 1。"""
 
-JacobianMatrix: TypeAlias = Float[np.ndarray, "T T"]
+type JacobianMatrix = Float[FloatArray, "T T"]
 """(t, s) 要素が dY_t / dX_s。行 t = 応答の時点、列 s = ショックの時点。"""
 ```
 
@@ -81,12 +82,12 @@ Q: "n_e n_a" とはどういう意味？こういう記法なの？記法なら�
 
 **ライブラリが決めている部分**
 
-| | 例 |
-|---|---|
-| dtype の種類 | `Float` / `Int` / `Bool` / `Shaped` |
-| コンテナの型 | `np.ndarray`（`jax.Array` や `torch.Tensor` も書ける） |
-| 文字列がスペース区切りであること | `"n_e n_a"` は2軸、`"n_a"` は1軸 |
-| 特殊記法 | `"*batch"` = 任意個の軸、`"n_a=200"` = 長さを固定、`"#n_a"` = ブロードキャスト可、`"_"` = 名前なし |
+|                                  | 例                                                                                                 |
+| -------------------------------- | -------------------------------------------------------------------------------------------------- |
+| dtype の種類                     | `Float` / `Int` / `Bool` / `Shaped`                                                                |
+| コンテナの型                     | `np.ndarray`（`jax.Array` や `torch.Tensor` も書ける）                                             |
+| 文字列がスペース区切りであること | `"n_e n_a"` は2軸、`"n_a"` は1軸                                                                   |
+| 特殊記法                         | `"*batch"` = 任意個の軸、`"n_a=200"` = 長さを固定、`"#n_a"` = ブロードキャスト可、`"_"` = 名前なし |
 
 **自分で決める部分**
 
@@ -122,10 +123,10 @@ Q: pydanticを使っていればこういうこと（typed関数の自作）っ�
 
 pydantic にも関数用の `@validate_call` があるので試してみたが、決定的な差があった。
 
-| 検査したいこと | `@validate_call` | `typed`（jaxtyped + beartype） |
-|---|---|---|
-| 引数1本の次元数（1次元を渡すべきところに2次元） | 検出する | 検出する |
-| **引数をまたいだ軸長の一致**（`n_e` が 2 と 3） | **素通り** | 検出する |
+| 検査したいこと                                  | `@validate_call` | `typed`（jaxtyped + beartype） |
+| ----------------------------------------------- | ---------------- | ------------------------------ |
+| 引数1本の次元数（1次元を渡すべきところに2次元） | 検出する         | 検出する                       |
+| **引数をまたいだ軸長の一致**（`n_e` が 2 と 3） | **素通り**       | 検出する                       |
 
 2行目が今回いちばん欲しかったもの。「資産グリッドは 200 点なのに政策は 150 点」のような取り違えは引数をまたぐので、`@validate_call` では捕まらない。
 
@@ -136,7 +137,7 @@ pydantic にも関数用の `@validate_call` があるので試してみたが�
 ```python
 _RUNTIME_TYPECHECK = os.environ.get("KS_TYPECHECK", "1").lower() not in ("0", "false", "no")
 
-def typed(fn: _F) -> _F:
+def typed[F: Callable[..., object]](fn: F) -> F:
     """引数と返り値の dtype・形状を実行時に検査するデコレータ。"""
     if not _RUNTIME_TYPECHECK:
         return fn
@@ -166,10 +167,10 @@ Q: Configdict()って何？使うと何が良い？
 
 **A:** そのモデルの**ふるまいの設定**をまとめたもの。`model_config = ConfigDict(...)` と書くとクラス全体に効く。このリポジトリで使っているのは2つだけ。
 
-| 設定 | 効果 |
-|---|---|
-| `frozen=True` | 生成後に属性を書き換えられなくする。`ss.K = 999` が `ValidationError` になる |
-| `arbitrary_types_allowed=True` | pydantic が標準で知らない型（`np.ndarray`）をフィールドに持てるようにする |
+| 設定                           | 効果                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `frozen=True`                  | 生成後に属性を書き換えられなくする。`ss.K = 999` が `ValidationError` になる |
+| `arbitrary_types_allowed=True` | pydantic が標準で知らない型（`np.ndarray`）をフィールドに持てるようにする    |
 
 `KSCalibration` はスカラーだけなので `frozen=True` のみ。`KSModel` / `SteadyState` / `HouseholdJacobians` は配列を持つので両方いる。
 
@@ -203,8 +204,8 @@ Q: クラスが引数をとっていないように見えるけど、CofifDict�
 
 **A:** `ConfigDict` とは関係ない。別の話が2つ混ざっている。
 
-- **`class KSCalibration(BaseModel):` の丸括弧は継承元を書く場所**であって、引数ではない。「`BaseModel` を継承する」という意味
-- **`__init__` が見えないのは pydantic が自動生成しているから**。`alpha: float = Field(0.36, ...)` と書いた時点で `KSCalibration(alpha=0.4)` が使えるようになる
+- `class KSCalibration(BaseModel):` の丸括弧は継承元を書く場所であって、引数ではない。「`BaseModel` を継承する」という意味
+- `__init__` が見えないのは pydantic が自動生成しているから。`alpha: float = Field(0.36, ...)` と書いた時点で `KSCalibration(alpha=0.4)` が使えるようになる
 
 `model_config = ConfigDict(frozen=True)` も引数ではなく**クラス変数**。pydantic がこの名前の変数を特別扱いして設定として読む、という約束になっている。
 
@@ -218,7 +219,7 @@ def f(x: np.ndarray) -> np.ndarray:      # 形の情報はゼロ
 
 numpy 公式の `numpy.typing.NDArray[np.float64]` でも dtype までで、次元数も軸長も表現できない。jaxtyping はその隙間を埋めるライブラリ。名前に jax とあるが **numpy 単体で問題なく使える**（このリポジトリは jax を入れていない）。
 
-デファクトかというと、正直に言えば**「その分野では」**。JAX / PyTorch 系の研究コードでは広く使われているが、数値経済学のコードでは注釈なしか docstring で済ませる流儀がまだ多数派。ほかの選択肢は
+デファクトかというと、正直に言えば\*\*「その分野では」\*\*。JAX / PyTorch 系の研究コードでは広く使われているが、数値経済学のコードでは注釈なしか docstring で済ませる流儀がまだ多数派。ほかの選択肢は
 
 - `numpy.typing.NDArray` … 標準寄りだが dtype まで
 - `nptyping` … 似た目的だがメンテが停滞気味
@@ -230,12 +231,12 @@ Q: jaxtype と pydantic は何が違う？pydantic にjaxtypeを混ぜること�
 
 **A:** 守備範囲が違う。
 
-| | jaxtyping | pydantic |
-|---|---|---|
-| 主な対象 | 配列（dtype と形） | スカラー・辞書・ネストしたモデル |
-| 検査のタイミング | 関数の呼び出し時（`typed` を付けたもの） | モデルの生成時 |
-| 値の範囲（$0 < \beta < 1$ など） | 見ない | `Field(gt=0, lt=1)` で見る |
-| 引数をまたいだ軸長の一致 | 見る | 見ない |
+|                                  | jaxtyping                                | pydantic                         |
+| -------------------------------- | ---------------------------------------- | -------------------------------- |
+| 主な対象                         | 配列（dtype と形）                       | スカラー・辞書・ネストしたモデル |
+| 検査のタイミング                 | 関数の呼び出し時（`typed` を付けたもの） | モデルの生成時                   |
+| 値の範囲（$0 < \beta < 1$ など） | 見ない                                   | `Field(gt=0, lt=1)` で見る       |
+| 引数をまたいだ軸長の一致         | 見る                                     | 見ない                           |
 
 **混ぜること自体は公式にサポートされている。** jaxtyping の型は `__get_pydantic_core_schema__` を実装しているので、pydantic のフィールドに書けば生成時に形を検査してくれる。実測で `M(Pi=np.eye(2)[0])`（1次元を渡す）は `ValidationError` になる。
 
@@ -250,12 +251,12 @@ Q: gtとltとは何？変数の取りうる区間？
 
 **A:** そのとおり、取りうる区間の指定。pydantic の `Field` に渡す制約。
 
-| | 意味 |
-|---|---|
+|      | 意味                                                       |
+| ---- | ---------------------------------------------------------- |
 | `gt` | greater than（より大きい）。`gt=0.0` なら 0 そのものは不可 |
-| `ge` | greater than or equal |
-| `lt` | less than |
-| `le` | less than or equal |
+| `ge` | greater than or equal                                      |
+| `lt` | less than                                                  |
+| `le` | less than or equal                                         |
 
 `Field(0.99, gt=0.0, lt=1.0)` は「既定値 0.99、取りうる範囲は開区間 $(0, 1)$」。範囲外なら生成時に `ValidationError`。
 
@@ -263,12 +264,12 @@ Q: delta はなぜ四半期？
 
 **A:** モデル全体が四半期の頻度で組まれているから。KS(1998) がそう組んでいる。
 
-| パラメータ | 四半期の値 | 年率に直すと |
-|---|---|---|
-| `delta = 0.025` | 資本減耗 2.5%/期 | $1-(1-0.025)^4 = 9.6\%$ |
-| `beta = 0.99` | 割引因子 | 時間選好率 $(1/0.99)^4 - 1 = 4.1\%$ |
-| `dur_good = 8` | 好況が平均8期続く | 2年 |
-| `dur_unemployed_bad = 2.5` | 不況時の失業が平均2.5期 | 約7.5ヶ月 |
+| パラメータ                 | 四半期の値              | 年率に直すと                        |
+| -------------------------- | ----------------------- | ----------------------------------- |
+| `delta = 0.025`            | 資本減耗 2.5%/期        | $1-(1-0.025)^4 = 9.6\%$             |
+| `beta = 0.99`              | 割引因子                | 時間選好率 $(1/0.99)^4 - 1 = 4.1\%$ |
+| `dur_good = 8`             | 好況が平均8期続く       | 2年                                 |
+| `dur_unemployed_bad = 2.5` | 不況時の失業が平均2.5期 | 約7.5ヶ月                           |
 
 ヤコビアンの $t$ や $s$ も四半期。$T = 5$ は5四半期＝1年3ヶ月ぶんの経路。
 
@@ -288,9 +289,16 @@ Q: なぜその値以上だと発散するの？
 
 **A:** オイラー方程式から出る。
 
-$$u'(c_t) = \beta(1+r)\, E_t[u'(c_{t+1})]$$
+$$
+u'(c_t) = \beta(1+r) E_t[u'(c_{t+1})]
+$$
 
 $\beta(1+r) = 1$ ちょうどのとき、これは $u'(c_t) = E_t[u'(c_{t+1})]$、つまり**限界効用がマルチンゲール**になる。限界効用は正なので、非負マルチンゲールは収束する。ところが個別の所得リスクが毎期入り続けるので、収束先は $u'(c) = 0$、すなわち $c \to \infty$ しかない。消費が無限に増えるには資産が無限に増えるしかないので、**定常分布が存在しない**。$\beta(1+r) > 1$ ならもっと露骨で、同じ結論。
+
+Q: $\beta(1+r)>1$ のとき無限期間先の消費が少しでも0より大きかったらc_t が無限大に発散するという理解で正しい？
+
+$$
+$$
 
 数値でも見える。境界 $K = 11.5564$ に近づくほど資産需要が爆発する。
 
@@ -336,10 +344,10 @@ Q: 失業保険の額は外生的に与えられるのでは？
 
 **混乱の原因はおそらく「0.07 が2つある」こと。**
 
-| | 何を表すか | どこから来るか |
-|---|---|---|
-| 失業給付 `unemployment_insurance = 0.07` | 失業者がもらう**金額** | 手で置いたパラメータ |
-| 定常失業率 `u = 0.07` | 人口の何**割**が失業しているか | `dur` から計算で出てくる |
+|                                          | 何を表すか                     | どこから来るか           |
+| ---------------------------------------- | ------------------------------ | ------------------------ |
+| 失業給付 `unemployment_insurance = 0.07` | 失業者がもらう**金額**         | 手で置いたパラメータ     |
+| 定常失業率 `u = 0.07`                    | 人口の何**割**が失業しているか | `dur` から計算で出てくる |
 
 **この2つはまったく無関係な量で、数値が一致しているのは偶然。** 紛らわしい書き方をしていた。
 
@@ -374,12 +382,12 @@ Q: row, col って何？なぜindexの足し算掛け算をしている？
 
 **A:** **2次元の状態 $(A, l)$ を1次元の通し番号に潰している**。$A$ が2通り、$l$ が2通りなので状態は4つあり、0〜3 の番号を振る。
 
-| 番号 | 計算 | $(A, l)$ |
-|---|---|---|
-| 0 | `2*0 + 0` | (不況, 失業) |
-| 1 | `2*0 + 1` | (不況, 就業) |
-| 2 | `2*1 + 0` | (好況, 失業) |
-| 3 | `2*1 + 1` | (好況, 就業) |
+| 番号 | 計算      | $(A, l)$     |
+| ---- | --------- | ------------ |
+| 0    | `2*0 + 0` | (不況, 失業) |
+| 1    | `2*0 + 1` | (不況, 就業) |
+| 2    | `2*1 + 0` | (好況, 失業) |
+| 3    | `2*1 + 1` | (好況, 就業) |
 
 `row = 2 * i_a + i_l` の `2` は「$l$ が2通りある」の 2。**$A$ を1つ進めると番号が2つ飛ぶ**、ということ。時刻を「60 × 時 + 分」で1つの数にするのと同じ発想。
 
@@ -465,11 +473,11 @@ Q: もう少し説明が欲しい. Krusel and Smith では 4x4行列を外生的
 
 **A:** いいえ、**外生性は何も変わっていない**。落ちているのは別のもの。
 
-| | KS(1998) | SSJ |
-|---|---|---|
-| 失業保険 0.07 | 外生 | **外生のまま。1ミリも変えていない** |
-| 遷移行列 | 4×4 を外生的に与える | **2×2 を外生的に与える** |
-| 集計ショック $A$ | 状態変数 | 状態変数ではない |
+|                  | KS(1998)             | SSJ                                 |
+| ---------------- | -------------------- | ----------------------------------- |
+| 失業保険 0.07    | 外生                 | **外生のまま。1ミリも変えていない** |
+| 遷移行列         | 4×4 を外生的に与える | **2×2 を外生的に与える**            |
+| 集計ショック $A$ | 状態変数             | 状態変数ではない                    |
 
 つまり「外生 → 内生」になったのではなく、**外生的に与える行列が 4×4 から 2×2 に差し替わった**だけ。
 
@@ -480,7 +488,7 @@ Q: もう少し説明が欲しい. Krusel and Smith では 4x4行列を外生的
 
 これは確かに情報の欠落だが、**避けようがない**。SSJ の定常状態には $A$ が存在しないので、「$A$ に依存する遷移確率」を書く場所がそもそもない。$A$ を消すと決めた時点で決まってしまう。そして直接法のせいでもない（Q「この問題って直接法でも…」と同じ話）。
 
-ただし SSJ の枠組みの中で埋め戻せる。SSJ では集計ショックは「状態変数」ではなく**「入力経路への摂動」**として復活する。$Z_t$ の経路を揺らし、それと連動して $\Pi_t$ も揺らせば、「不況で失業リスクが上がる」効果を $J^{K,\Pi}$ として取り込める。今回の宿題（第7章）でそこまでやっていないだけ。
+ただし SSJ の枠組みの中で埋め戻せる。SSJ では集計ショックは「状態変数」ではなく\*\*「入力経路への摂動」\*\*として復活する。$Z_t$ の経路を揺らし、それと連動して $\Pi_t$ も揺らせば、「不況で失業リスクが上がる」効果を $J^{K,\Pi}$ として取り込める。今回の宿題（第7章）でそこまでやっていないだけ。
 
 ---
 
@@ -534,7 +542,7 @@ a or b       # a が真なら a を、偽なら b を返す（True/False では�
 
 **ただしこの書き方には落とし穴がある。** `or` が見るのは「`None` かどうか」ではなく「真か偽か」なので、`0` や `[]` や `""` のような**偽だが有効な値**が渡されると意図せず既定値に化ける。
 
-今回は `calibration` が pydantic モデルか `None` のどちらかで、pydantic モデルは常に真（実測で `bool(KSCalibration())` は `True`）なので実害はなかった。とはいえ意図が明確な方がよいので、**この質問を受けて `is None` に書き換えた**。上に引用したコードが書き換え後のもの。
+今回は `calibration` が pydantic モデルか `None` のどちらかで、pydantic モデルは常に真（実測で `bool(KSCalibration())` は `True`）なので実害はなかった。とはいえ意図が明確な方がよいので、**この質問を受けて** `is None` に書き換えた。上に引用したコードが書き換え後のもの。
 
 ```python
 c = calibration or KSCalibration()                          # 書き換え前
@@ -579,9 +587,7 @@ Q: 均衡の上限がなぜわかるのか？なぜその式なのか？
 
 **A:** $r(K) = 1/\beta - 1$ を $K$ について解いただけ。$r(K)$ は $K$ の減少関数なので、$r$ の上限がそのまま $K$ の下限に翻訳される。
 
-$$\alpha Z \left(\frac{K}{N}\right)^{\alpha-1} - \delta = \frac{1}{\beta} - 1
-\qquad\Longrightarrow\qquad
-K = N\left[\frac{\alpha Z}{1/\beta - 1 + \delta}\right]^{\frac{1}{1-\alpha}}$$
+$$\alpha Z \left(\frac{K}{N}\right)^{\alpha-1} - \delta = \frac{1}{\beta} - 1 \qquad\Longrightarrow\qquad K = N\left\[\frac{\alpha Z}{1/\beta - 1 + \delta}\right\]^{\frac{1}{1-\alpha}}$$
 
 これがコードの式そのもの。
 
@@ -675,10 +681,13 @@ class BackwardStep(NamedTuple):
 政策 $a_t$ はグリッド上の点に落ちるとは限らないので、まず「くじ」に直す。
 
 ```python
-class Lottery(NamedTuple):
+@dataclass(frozen=True, slots=True)
+class Lottery:
     """政策 a_t をグリッド上の2点に振り分ける「くじ」表現。
 
         a_t = weight * a_grid[index] + (1 - weight) * a_grid[index + 1]
+
+    NamedTuple にしていないのは、フィールド名 `index` が `tuple.index` と衝突するため。
     """
     index: LotteryIndex
     weight: LotteryWeight
@@ -698,7 +707,7 @@ def forward_endogenous(D: Distribution, lottery: Lottery) -> Distribution:
 
 
 @typed
-def forward_step(D: Distribution, Pi: Float[np.ndarray, "n_e n_e"], lottery: Lottery) -> Distribution:
+def forward_step(D: Distribution, Pi: EmploymentTransition, lottery: Lottery) -> Distribution:
     """D_{t+1} = Lambda_t' D_t。まず資産、次に雇用状態の順（SSJ の規約と同じ）。"""
     return Pi.T @ forward_endogenous(D, lottery)
 ```
@@ -732,9 +741,7 @@ def forward_step(D: Distribution, Pi: Float[np.ndarray, "n_e n_e"], lottery: Lot
 
 ```python
 @typed
-def stationary_from_policy(
-    Pi: Float[np.ndarray, "n_e n_e"], lottery: Lottery
-) -> StationaryDistribution:
+def stationary_from_policy(Pi: EmploymentTransition, lottery: Lottery) -> StationaryDistribution:
     """政策から定常分布を直接解く: D = Lambda' D, 1'D = 1。"""
     n_e, n_a = lottery.index.shape
     n = n_e * n_a
@@ -902,13 +909,13 @@ class HouseholdJacobians(BaseModel):
                 )
                 ...
             else:
-                up = steady_step(Va_up)
+                up = steady_step(up.Va)
 ```
 
 **②** `expectation_vectors` — 分布の痕跡を将来の集計量に変換するベクトル。
 
 ```python
-    def expectation_vectors(outcome: PolicyFunction) -> Float[np.ndarray, "T_minus_1 n_e n_a"]:
+    def expectation_vectors(outcome: PolicyFunction) -> Float[FloatArray, "T_minus_1 n_e n_a"]:
         """curly_E[t]: 分布の痕跡を将来の集計量に変換するベクトル（ノート 8.5）。"""
         rows = np.arange(model.n_e)[:, None]
         E = np.empty((max(T - 1, 1), model.n_e, model.n_a))

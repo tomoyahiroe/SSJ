@@ -29,12 +29,36 @@
 
 ## セットアップ
 
-`uv` + `pyproject.toml` で管理している。依存は `uv.lock` に固定済み。
+`uv` + `pyproject.toml` で管理している。依存は `uv.lock` に固定済み。Python は 3.14。
 
 ```bash
 uv sync                      # .venv を作って依存を入れる（ks も editable で入る）
 uv run python -c "import ks" # 実行は uv run 経由が確実
 uv run jupyter lab           # ノートブック
+```
+
+### JIT
+
+CPython 3.14 の実験的 JIT は `PYTHON_JIT=1` を**インタプリタ起動前に**環境変数で渡すと有効になる
+（`-X` オプションや `os.environ` では有効にならない）。`.env` にその1行を置いてあるので、
+
+```bash
+uv run --env-file .env python ...      # スクリプト
+uv run --env-file .env jupyter lab     # ノートブック（カーネルにも引き継がれる）
+uv run --env-file .env python -c "import sys; print(sys._jit.is_enabled())"   # 確認
+```
+
+JIT が組み込まれているのは uv 管理の CPython（`python-preference = "only-managed"` で固定）。
+Homebrew の python@3.14 は JIT なしでビルドされている。
+なお本体の重い処理は numpy 側なので、JIT の効果はほぼ出ない（実測で差なし）。
+
+### Lint / 型検査 / テスト
+
+```bash
+uv format                    # ruff format（ノートブックは対象外）
+uv run ruff check .          # ノートブックも対象。8_2_* の元祖コードは除外
+uv run mypy                  # ks/ と tests/ を strict + α で検査（設定は pyproject.toml）
+uv run pytest                # tests/。各テストの docstring がその関数の仕様の説明になっている
 ```
 
 `ks` はパッケージとしてインストールされるので、`ks/*.py` を編集すれば
